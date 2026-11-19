@@ -30,6 +30,7 @@ You can run every step from any tab. The script finds the right response tabs on
 
 ### Automatic Round 2 form
 - Builds a new Google Form with the two winning topics and links its responses to the same spreadsheet.
+- Saves the Round 2 form in the same Drive folder as your Round 1 form, so each class's forms stay together.
 - Turns on **one response per column** for the topic-ranking grid automatically, so students can't rank both topics "1".
 - Asks for side preference separately, on a 5-point scale: Strongly Prefer Pro, Prefer Pro, No Preference, Prefer Con, Strongly Prefer Con.
 
@@ -81,7 +82,9 @@ Old Borda Results and Final Teams tabs are kept.
 Once students have voted, click **1. Run Borda Count (Round 1)**. A new **Borda Results** tab opens with the scores, the winners highlighted, and the number of ballots counted (plus how many older ballots were ignored).
 
 ### Step 2: Create the Round 2 form
-Click **2. Generate Round 2 Form**. A popup shows the **student link** (to share) and the **edit link**. There are no manual settings to change on this form.
+Click **2. Generate Round 2 Form**. A popup shows the **student link** (to share) and the **edit link**. There are no manual settings to change on this form. It's saved in the same Drive folder as your Round 1 form. (If the script can't access that folder, the form stays in My Drive and still works.)
+
+The first time you run Step 2 after updating the script, Google asks you to authorize again, because moving files needs Google Drive access.
 
 To get the links again later, use **❓ What do I do next?**
 
