@@ -139,6 +139,12 @@ If topics tie for the second winning spot, the script picks alphabetically and n
 **"The winners changed since your Round 2 form was created."**
 You re-ran step 1 after making the Round 2 form, and the result changed. Run step 2 again and stop sharing the old Round 2 link.
 
+**"CHECK YOUR FORM: the Round 1 grid has X topics but Y rank columns."**
+After adding or removing topics, also update the rank columns so they run from 1 to the number of topics. Ranks outside that range are ignored, and the alert tells you how many.
+
+**Created a second Round 2 form by mistake?**
+If you answer Yes to "Create a new one and close the old one?", the old form stops accepting responses. Share only the new link.
+
 **Students see "Use each rank only once."**
 That's expected: they tried to give both topics the same rank.
 
