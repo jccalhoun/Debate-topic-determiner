@@ -125,6 +125,25 @@ function getRound1Sheet_() {
   return sheet;
 }
 
+/**
+ * Moves a file into the same Drive folder as the Round 1 form (or, if Round 1
+ * isn't known, the spreadsheet's folder). Returns the folder name, or null if
+ * it couldn't be moved. Never throws: the form still works wherever it is.
+ */
+function moveNextToRound1_(fileId) {
+  try {
+    var anchorId = props_().getProperty(PROP_ROUND1_FORM) ||
+                   SpreadsheetApp.getActiveSpreadsheet().getId();
+    var parents = DriveApp.getFileById(anchorId).getParents();
+    if (!parents.hasNext()) return null;
+    var folder = parents.next();
+    DriveApp.getFileById(fileId).moveTo(folder);
+    return folder.getName();
+  } catch (e) {
+    return null;
+  }
+}
+
 /** Row names and column count of every grid question on a form. */
 function gridInfo_(form) {
   var rows = [], columns = 0;
@@ -456,7 +475,10 @@ function createRound2Form() {
       .setChoiceValues(STANCE_CHOICES)
       .setRequired(true);
 
-  showStatus('Round 2 form created. Share the student link below.');
+  // Keep each class's forms together: put Round 2 next to the Round 1 form
+  var folderName = moveNextToRound1_(form.getId());
+  showStatus('Round 2 form created' + (folderName ? ' in folder "' + folderName + '"' : '') +
+    '. Share the student link below.');
 }
 
 /* ------------------------------------------------------------------ */
