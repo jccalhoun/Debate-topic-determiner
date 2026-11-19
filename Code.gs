@@ -59,16 +59,41 @@ function openFormSafe_(formId) {
   try { return FormApp.openById(formId); } catch (e) { return null; }
 }
 
-/** Finds the response tab linked to a given form ID, or null. */
+/** True if this tab's linked form is the given form. */
+function sheetIsLinkedTo_(sheet, formId) {
+  var url = sheet.getFormUrl();
+  if (!url) return false;
+  try { return FormApp.openByUrl(url).getId() === formId; } catch (e) { return false; }
+}
+
+/**
+ * Finds the response tab linked to a given form ID, or null.
+ * Checks the tab cached from last time first (one form lookup instead of one
+ * per linked tab), then scans newest tabs first and caches what it finds.
+ */
 function findSheetForForm_(formId) {
   if (!formId) return null;
-  var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
-  for (var i = 0; i < sheets.length; i++) {
-    var url = sheets[i].getFormUrl();
-    if (!url) continue;
-    try {
-      if (FormApp.openByUrl(url).getId() === formId) return sheets[i];
-    } catch (e) { /* linked form was deleted; skip */ }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var props = props_();
+  var cacheKey = 'SHEET_FOR_' + formId;
+  var sheets = ss.getSheets();
+
+  var cachedId = props.getProperty(cacheKey);
+  if (cachedId) {
+    for (var i = 0; i < sheets.length; i++) {
+      if (String(sheets[i].getSheetId()) === cachedId) {
+        if (sheetIsLinkedTo_(sheets[i], formId)) return sheets[i];
+        break;
+      }
+    }
+  }
+
+  for (var j = sheets.length - 1; j >= 0; j--) {
+    if (String(sheets[j].getSheetId()) === cachedId) continue;
+    if (sheetIsLinkedTo_(sheets[j], formId)) {
+      props.setProperty(cacheKey, String(sheets[j].getSheetId()));
+      return sheets[j];
+    }
   }
   return null;
 }
@@ -86,7 +111,8 @@ function getRound1Sheet_() {
   var url = sheet.getFormUrl();
   if (!url) return null;
 
-  var formId = FormApp.openByUrl(url).getId();
+  var formId;
+  try { formId = FormApp.openByUrl(url).getId(); } catch (e) { return null; }
   if (formId === props.getProperty(PROP_ROUND2_FORM)) return null;
 
   var ui = SpreadsheetApp.getUi();
@@ -99,10 +125,35 @@ function getRound1Sheet_() {
   return sheet;
 }
 
-/** Pulls the topic name out of a grid header like "Question title [Topic]". */
-function gridRowFromHeader_(header) {
-  var match = String(header).match(/\[([^\[\]]*)\]\s*$/);
-  return match ? match[1].trim() : null;
+/** Row names and column count of every grid question on a form. */
+function gridInfo_(form) {
+  var rows = [], columns = 0;
+  form.getItems(FormApp.ItemType.GRID).forEach(function(item) {
+    var g = item.asGridItem();
+    g.getRows().forEach(function(r) { if (rows.indexOf(r) === -1) rows.push(r); });
+    columns = Math.max(columns, g.getColumns().length);
+  });
+  return { rows: rows, columns: columns };
+}
+
+/**
+ * Finds response columns for known topic names. A grid header looks like
+ * "Question title [Topic]", so we match the exact "[Topic]" suffix. This works
+ * even when a topic name contains brackets, e.g. "TikTok Ban [US]".
+ * A topic can match more than one column (deleted and re-added on the form).
+ */
+function findTopicCols_(headers, topicNames) {
+  var cols = [];
+  topicNames.forEach(function(topic) {
+    var suffix = '[' + topic + ']';
+    for (var i = 0; i < headers.length; i++) {
+      var h = String(headers[i]).trim();
+      if (h.length > suffix.length && h.slice(-suffix.length) === suffix) {
+        cols.push({ index: i, topic: topic });
+      }
+    }
+  });
+  return cols;
 }
 
 /* ------------------------------------------------------------------ */
@@ -189,6 +240,10 @@ function startNewCycle() {
   props.deleteProperty(PROP_ROUND2_FORM);
   props.setProperty(PROP_CYCLE_START, String(Date.now()));
 
+  // Learn the Round 1 tab now if we don't know it yet, so the status
+  // window can show the Round 1 student link on the very first cycle.
+  getRound1Sheet_();
+
   // Reopen the Round 1 form if we know which one it is
   var r1 = openFormSafe_(props.getProperty(PROP_ROUND1_FORM));
   if (r1 && !r1.isAcceptingResponses()) r1.setAcceptingResponses(true);
@@ -217,36 +272,31 @@ function runBordaCount() {
     return;
   }
 
-  // Find the grid columns
-  var headers = data[0];
-  var topicCols = [];
-  for (var i = 0; i < headers.length; i++) {
-    var topic = gridRowFromHeader_(headers[i]);
-    if (topic) topicCols.push({ index: i, topic: topic });
-  }
+  // The form's current grid rows are the topics. Columns for topics that were
+  // removed from the form are ignored (Sheets keeps old columns around).
+  var grid = gridInfo_(FormApp.openByUrl(sheet.getFormUrl()));
+  var topicNames = grid.rows;
+  var numTopics = topicNames.length;
+  var topicCols = findTopicCols_(data[0], topicNames);
 
-  // Ignore columns for topics that are no longer on the form (Sheets keeps old columns)
-  var formUrl = sheet.getFormUrl();
-  if (formUrl) {
-    var current = {};
-    FormApp.openByUrl(formUrl).getItems(FormApp.ItemType.GRID).forEach(function(item) {
-      item.asGridItem().getRows().forEach(function(r) { current[String(r).trim()] = true; });
-    });
-    topicCols = topicCols.filter(function(tc) { return current[tc.topic]; });
-  }
-
-  if (topicCols.length < 2) {
-    ui.alert("Error: Could not find at least two ranking columns. Make sure your form uses a Multiple Choice Grid.");
+  if (numTopics < 2 || topicCols.length < 2) {
+    ui.alert("Error: Could not find at least two topic ranking columns. Make sure your Round 1 form uses a Multiple Choice Grid.");
     return;
   }
 
-  var numTopics = topicCols.length;
+  var setupWarning = "";
+  if (grid.columns !== numTopics) {
+    setupWarning = "\n\nCHECK YOUR FORM: the Round 1 grid has " + numTopics + " topics but " +
+      grid.columns + " rank columns. These should match (ranks 1 to " + numTopics + ").";
+  }
+
   var scores = {};
-  topicCols.forEach(function(tc) { scores[tc.topic] = 0; });
+  topicNames.forEach(function(t) { scores[t] = 0; });
 
   var cycleStart = Number(props.getProperty(PROP_CYCLE_START) || 0);
   var validVotes = 0;
   var skippedOld = 0;
+  var outOfRange = 0;
 
   for (var r = 1; r < data.length; r++) {
     var row = data[r];
@@ -259,13 +309,22 @@ function runBordaCount() {
 
     var rowHasData = false;
     for (var c = 0; c < topicCols.length; c++) {
-      var rank = parseInt(row[topicCols[c].index], 10);
-      if (!isNaN(rank)) {
-        scores[topicCols[c].topic] += numTopics - rank + 1;
-        rowHasData = true;
+      var cell = row[topicCols[c].index];
+      if (cell === '' || cell === null) continue;
+      var rank = parseInt(cell, 10);
+      if (isNaN(rank) || rank < 1 || rank > numTopics) {
+        outOfRange++;
+        continue;
       }
+      scores[topicCols[c].topic] += numTopics - rank + 1;
+      rowHasData = true;
     }
     if (rowHasData) validVotes++;
+  }
+
+  if (outOfRange) {
+    setupWarning += "\n\nIgnored " + outOfRange + " rank(s) outside 1 to " + numTopics +
+      ". Check that the Round 1 grid's rank columns match the number of topics.";
   }
 
   if (validVotes === 0) {
@@ -320,9 +379,11 @@ function runBordaCount() {
   var winnersChanged = oldA && oldB &&
       [oldA, oldB].sort().join('|') !== [results[0].topic, results[1].topic].sort().join('|');
   if (winnersChanged && props.getProperty(PROP_ROUND2_FORM)) {
+    var staleForm = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
+    if (staleForm) staleForm.setAcceptingResponses(false);
     props.deleteProperty(PROP_ROUND2_FORM);
-    staleNote = "\n\nNOTE: The winners changed since your Round 2 form was created. " +
-      "Run step 2 again to make a new form, and stop sharing the old one.";
+    staleNote = "\n\nNOTE: The winners changed since your Round 2 form was created, so that form " +
+      "has been closed. Run step 2 again to make a new one.";
   }
 
   props.setProperty(PROP_TOPIC_A, results[0].topic);
@@ -334,7 +395,7 @@ function runBordaCount() {
   resultSheet.activate();
   ui.alert("Calculation complete!\n\nCounted " + validVotes + " ballots" +
     (skippedOld ? " (ignored " + skippedOld + " from before this cycle)" : "") + "." +
-    tieWarning + staleNote + tip +
+    tieWarning + setupWarning + staleNote + tip +
     "\n\nNext step: Debate Tools > 2. Generate Round 2 Form.");
 }
 
@@ -355,12 +416,14 @@ function createRound2Form() {
   }
 
   // Guard against making a second form for the same cycle by accident
-  if (openFormSafe_(props.getProperty(PROP_ROUND2_FORM))) {
+  var existing = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
+  if (existing) {
     var answer = ui.alert(
       'A Round 2 form already exists for this cycle.',
-      'Create another one anyway? (Choose No and use "What do I do next?" to get the existing link.)',
+      'Create a new one and close the old one? (Choose No and use "What do I do next?" to get the existing link.)',
       ui.ButtonSet.YES_NO);
     if (answer !== ui.Button.YES) return;
+    existing.setAcceptingResponses(false);
   }
 
   var dateLabel = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), "MMM d, yyyy");
@@ -414,16 +477,16 @@ function matchTeams() {
   }
 
   // --- FIND COLUMNS ---
+  // Topics come from the Round 2 form itself, matched by exact "[Topic]" suffix
   var headers = data[0];
+  var r2Form = openFormSafe_(formId);
+  var topics = r2Form ? gridInfo_(r2Form).rows : [];
+  var topicCols = findTopicCols_(headers, topics);
+  var topicColIdx = topicCols.map(function(t) { return t.index; });
   var nameCol = -1, stanceCol = -1;
-  var topicCols = [];
 
   for (var i = 0; i < headers.length; i++) {
-    var topic = gridRowFromHeader_(headers[i]);
-    if (topic) {
-      topicCols.push({ index: i, topic: topic });
-      continue;
-    }
+    if (topicColIdx.indexOf(i) !== -1) continue;
     var header = String(headers[i]).toLowerCase();
     if (nameCol === -1 && header.indexOf('name') !== -1) {
       nameCol = i;
@@ -432,12 +495,10 @@ function matchTeams() {
     }
   }
 
-  if (nameCol === -1 || stanceCol === -1 || topicCols.length < 2) {
+  if (nameCol === -1 || stanceCol === -1 || topics.length < 2 || topicCols.length < topics.length) {
     ui.alert("Could not identify the name, topic ranking, and side columns on the Round 2 responses tab.");
     return;
   }
-
-  var topics = topicCols.map(function(t) { return t.topic; });
 
   // --- READ STUDENTS (latest submission per name wins) ---
   var byName = {};
@@ -454,7 +515,8 @@ function matchTeams() {
       if (!isNaN(rank)) prefs.push({ topic: topicCols[c].topic, rank: rank });
     }
     prefs.sort(function(a, b) { return a.rank - b.rank; });
-    var topicPrefs = prefs.map(function(p) { return p.topic; });
+    var topicPrefs = [];
+    prefs.forEach(function(p) { if (topicPrefs.indexOf(p.topic) === -1) topicPrefs.push(p.topic); });
     // Fill in any unranked topics so every student has a complete list
     topics.forEach(function(t) { if (topicPrefs.indexOf(t) === -1) topicPrefs.push(t); });
 
@@ -510,19 +572,17 @@ function matchTeams() {
   var topicTeams = {};
   topics.forEach(function(t) { topicTeams[t] = []; });
 
-  students.forEach(function(s) {
-    var choice = s.topicPrefs[0];
-    if (topicTeams[choice].length < topicCapacities[choice]) {
-      s.assignedTopic = choice; s.topicGranted = 1; topicTeams[choice].push(s);
-    }
-  });
-
-  students.filter(function(s) { return !s.assignedTopic; }).forEach(function(s) {
-    var choice = s.topicPrefs[1];
-    if (topicTeams[choice].length < topicCapacities[choice]) {
-      s.assignedTopic = choice; s.topicGranted = 2; topicTeams[choice].push(s);
-    }
-  });
+  // Pass 1 gives everyone their 1st choice while seats last; pass 2 places the
+  // rest in their 2nd choice. (Further passes only matter if the Round 2 form
+  // was hand-edited to have more than two topics.)
+  for (var pass = 0; pass < topics.length; pass++) {
+    students.filter(function(s) { return !s.assignedTopic; }).forEach(function(s) {
+      var choice = s.topicPrefs[pass];
+      if (topicTeams[choice].length < topicCapacities[choice]) {
+        s.assignedTopic = choice; s.topicGranted = pass + 1; topicTeams[choice].push(s);
+      }
+    });
+  }
 
   // --- PHASE 2: PRO/CON BALANCING ---
   topics.forEach(function(t) {
