@@ -235,6 +235,11 @@ function startNewCycle() {
   if (answer !== ui.Button.OK) return;
 
   var props = props_();
+
+  // If the previous cycle was abandoned before step 3, close its Round 2 form
+  var oldR2 = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
+  if (oldR2 && oldR2.isAcceptingResponses()) oldR2.setAcceptingResponses(false);
+
   props.deleteProperty(PROP_TOPIC_A);
   props.deleteProperty(PROP_TOPIC_B);
   props.deleteProperty(PROP_ROUND2_FORM);
@@ -620,10 +625,11 @@ function matchTeams() {
     return;
   }
 
-  var stats = { topic1: 0, topic2: 0, stanceYes: 0, stanceNo: 0, stanceNA: 0 };
+  var stats = { topic1: 0, topic2: 0, topicLower: 0, stanceYes: 0, stanceNo: 0, stanceNA: 0 };
   students.forEach(function(s) {
     if (s.topicGranted === 1) stats.topic1++;
-    if (s.topicGranted === 2) stats.topic2++;
+    else if (s.topicGranted === 2) stats.topic2++;
+    else stats.topicLower++;
     if (s.stanceGranted === 'Yes') stats.stanceYes++;
     if (s.stanceGranted === 'No') stats.stanceNo++;
     if (s.stanceGranted === 'N/A') stats.stanceNA++;
@@ -642,24 +648,30 @@ function matchTeams() {
   var report = [
     ["Match Satisfaction Report", "Count"],
     ["Topic: 1st Choice", stats.topic1],
-    ["Topic: 2nd Choice", stats.topic2],
+    ["Topic: 2nd Choice", stats.topic2]
+  ];
+  // Only appears if the Round 2 form was hand-edited to have 3+ topics
+  if (stats.topicLower) report.push(["Topic: 3rd Choice or Lower", stats.topicLower]);
+  report.push(
     ["Stance: Preferred (Strongly or Normal)", stats.stanceYes],
     ["Stance: Forced to Switch", stats.stanceNo],
     ["Stance: Had No Preference", stats.stanceNA]
-  ];
+  );
   rosterSheet.getRange(1, 1, report.length, 2).setValues(report);
   rosterSheet.getRange("A1:B1").setFontWeight("bold").setBackground("#cfe2f3");
 
-  rosterSheet.getRange("A8:E8")
+  // Roster starts one blank row below the report
+  var headerRow = report.length + 2;
+  rosterSheet.getRange(headerRow, 1, 1, 5)
       .setValues([["Debate Topic", "Side", "Student Name", "Topic Choice", "Stance Granted"]])
       .setFontWeight("bold").setBackground("#f3f3f3");
 
   var outputData = students.map(function(s) {
     return [s.assignedTopic, s.assignedStance, s.name, s.topicGranted, s.stanceGranted];
   });
-  rosterSheet.getRange(9, 1, outputData.length, 5).setValues(outputData);
+  rosterSheet.getRange(headerRow + 1, 1, outputData.length, 5).setValues(outputData);
   rosterSheet.autoResizeColumns(1, 5);
-  rosterSheet.getRange(9, 4, outputData.length, 2).setHorizontalAlignment("center");
+  rosterSheet.getRange(headerRow + 1, 4, outputData.length, 2).setHorizontalAlignment("center");
 
   // Close Round 2 so late submissions don't arrive after teams are posted
   var r2 = openFormSafe_(formId);
