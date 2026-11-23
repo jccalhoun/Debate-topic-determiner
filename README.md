@@ -22,14 +22,14 @@ You can run every step from any tab. The script finds the right response tabs on
 ## Features
 
 ### Round 1: Borda count consensus voting
-- Tallies ranked-choice ballots from a Google Form multiple-choice grid to find the two topics with the broadest support.
+- Tallies ranked-choice ballots from a Google Form multiple-choice grid to find the topics with the broadest support: the top two, or just the top one for a small class with a single debate.
 - Counts only ballots submitted since the current cycle started, so you can reuse the same form and spreadsheet every time.
 - Ignores columns for topics you've removed or renamed on the form. Google Sheets keeps those old columns, but they no longer count.
-- Breaks ties alphabetically so results are reproducible, and warns you when a tie decides which topic gets the second winning spot.
+- Breaks ties alphabetically so results are reproducible, and warns you when a tie decides which topic gets the last winning spot.
 - Creates a timestamped **Borda Results** audit tab that highlights the winners.
 
 ### Automatic Round 2 form
-- Builds a new Google Form with the two winning topics and links its responses to the same spreadsheet.
+- Builds a new Google Form with the winning topic(s) and links its responses to the same spreadsheet. With one debate, the form only asks for side preference.
 - Saves the Round 2 form in the same Drive folder as your Round 1 form, so each class's forms stay together.
 - Turns on **one response per column** for the topic-ranking grid automatically, so students can't rank both topics "1".
 - Asks for side preference separately, on a 5-point scale: Strongly Prefer Pro, Prefer Pro, No Preference, Prefer Con, Strongly Prefer Con.
@@ -78,8 +78,13 @@ Click **Debate Tools → 0. Start new debate cycle** *before* sharing the Round 
 
 Old Borda Results and Final Teams tabs are kept.
 
-### Step 1: Pick the two topics
-Once students have voted, click **1. Run Borda Count (Round 1)**. A new **Borda Results** tab opens with the scores, the winners highlighted, and the number of ballots counted (plus how many older ballots were ignored).
+### Step 1: Pick the topics
+Once students have voted, click **1. Run Borda Count (Round 1)**. The script asks how many debates this class will have:
+
+- **Yes = two debates.** The top two topics win, and Round 2 asks students to rank them and pick a side.
+- **No = one debate.** For a small class. Only the top topic wins, Round 2 asks only for a side, and Step 3 splits the whole class into Pro and Con on that topic.
+
+A new **Borda Results** tab opens with the scores, the winners highlighted, and the number of ballots counted (plus how many older ballots were ignored).
 
 ### Step 2: Create the Round 2 form
 Click **2. Generate Round 2 Form**. A popup shows the **student link** (to share) and the **edit link**. There are no manual settings to change on this form. It's saved in the same Drive folder as your Round 1 form. (If the script can't access that folder, the form stays in My Drive and still works.)
@@ -136,8 +141,11 @@ No Round 2 form exists for this cycle yet (or it was deleted). Run step 2.
 **"Missing Round 1 winners."**
 Run step 1 before step 2.
 
+**Picked the wrong number of debates in Step 1?**
+Run Step 1 again and give the other answer. If you'd already made the Round 2 form, the script closes it and asks you to run Step 2 again.
+
 **Tie warnings**
-If topics tie for the second winning spot, the script picks alphabetically and names every tied topic in the alert. Check the Borda Results tab if you want to choose yourself. A tie for 1st place doesn't produce a warning, because both topics win either way.
+If topics tie for the last winning spot (2nd place with two debates, 1st place with one), the script picks alphabetically and names every tied topic in the alert. Check the Borda Results tab if you want to choose yourself. With two debates, a tie for 1st doesn't produce a warning, because both topics win either way.
 
 **"The winners changed since your Round 2 form was created."**
 You re-ran step 1 after making the Round 2 form, and the result changed. Run step 2 again and stop sharing the old Round 2 link.

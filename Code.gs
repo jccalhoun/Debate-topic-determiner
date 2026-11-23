@@ -13,6 +13,8 @@ var PROP_ROUND1_FORM = 'ROUND1_FORM_ID';
 var PROP_ROUND2_FORM = 'ROUND2_FORM_ID';
 var PROP_TOPIC_A = 'DEBATE_TOPIC_A';
 var PROP_TOPIC_B = 'DEBATE_TOPIC_B';
+var PROP_NUM_DEBATES = 'NUM_DEBATES';      // '1' or '2' (missing = 2, for older cycles)
+var PROP_ROUND2_TOPICS = 'ROUND2_TOPICS';  // JSON list of topics on the current Round 2 form
 
 var STANCE_CHOICES = [
   "Strongly Prefer Pro",
@@ -144,6 +146,16 @@ function moveNextToRound1_(fileId) {
   }
 }
 
+/** This cycle's Round 1 winners: one topic or two. Empty if step 1 hasn't run. */
+function savedWinners_() {
+  var props = props_();
+  var a = props.getProperty(PROP_TOPIC_A);
+  var b = props.getProperty(PROP_TOPIC_B);
+  if (!a) return [];
+  if (props.getProperty(PROP_NUM_DEBATES) === '1') return [a];
+  return b ? [a, b] : [];
+}
+
 /** Row names and column count of every grid question on a form. */
 function gridInfo_(form) {
   var rows = [], columns = 0;
@@ -188,8 +200,7 @@ function showStatus(headline) {
   var props = props_();
   var tz = ss.getSpreadsheetTimeZone();
   var start = Number(props.getProperty(PROP_CYCLE_START) || 0);
-  var topicA = props.getProperty(PROP_TOPIC_A);
-  var topicB = props.getProperty(PROP_TOPIC_B);
+  var winners = savedWinners_();
   var r1 = openFormSafe_(props.getProperty(PROP_ROUND1_FORM));
   var r2 = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
 
@@ -211,8 +222,10 @@ function showStatus(headline) {
     html += '<b>Round 1 tab:</b> not set yet (remembered the first time you run step 1)<br>';
   }
 
-  if (topicA && topicB) {
-    html += '<b>Winning topics:</b> ' + escapeHtml_(topicA) + ' / ' + escapeHtml_(topicB) + '<br>';
+  if (winners.length === 1) {
+    html += '<b>Winning topic (one debate):</b> ' + escapeHtml_(winners[0]) + '<br>';
+  } else if (winners.length === 2) {
+    html += '<b>Winning topics:</b> ' + escapeHtml_(winners[0]) + ' / ' + escapeHtml_(winners[1]) + '<br>';
   }
 
   if (r2) {
@@ -225,7 +238,7 @@ function showStatus(headline) {
   var next;
   if (!start) {
     next = 'Choose <b>0. Start new debate cycle</b>, then share your Round 1 form with students.';
-  } else if (!topicA || !topicB) {
+  } else if (winners.length === 0) {
     next = 'When Round 1 votes are in, choose <b>1. Run Borda Count</b>.';
   } else if (!r2) {
     next = 'Choose <b>2. Generate Round 2 Form</b>.';
@@ -259,6 +272,8 @@ function startNewCycle() {
   var oldR2 = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
   if (oldR2 && oldR2.isAcceptingResponses()) oldR2.setAcceptingResponses(false);
 
+  props.deleteProperty(PROP_NUM_DEBATES);
+  props.deleteProperty(PROP_ROUND2_TOPICS);
   props.deleteProperty(PROP_TOPIC_A);
   props.deleteProperty(PROP_TOPIC_B);
   props.deleteProperty(PROP_ROUND2_FORM);
@@ -368,12 +383,23 @@ function runBordaCount() {
     return a.topic.localeCompare(b.topic);
   });
 
-  // Only a tie at the 2nd/3rd boundary changes which topics win
+  // One debate (small class) or two?
+  var howMany = ui.alert(
+    'How many debates will this class have?',
+    'YES = two debates (the top 2 topics).\nNO = one debate (only the top topic), for a small class.',
+    ui.ButtonSet.YES_NO);
+  if (howMany !== ui.Button.YES && howMany !== ui.Button.NO) return;  // closed the dialog
+  var numDebates = (howMany === ui.Button.NO) ? 1 : 2;
+  var winners = results.slice(0, numDebates).map(function(x) { return x.topic; });
+
+  // Only a tie at the last winning spot changes which topics win
+  // (2nd vs 3rd for two debates, 1st vs 2nd for one)
   var tieWarning = "";
-  if (results.length > 2 && results[1].score === results[2].score) {
-    var tied = results.filter(function(x) { return x.score === results[1].score; })
+  var cut = numDebates - 1;
+  if (results.length > numDebates && results[cut].score === results[numDebates].score) {
+    var tied = results.filter(function(x) { return x.score === results[cut].score; })
                       .map(function(x) { return "'" + x.topic + "'"; });
-    tieWarning = "\n\nWARNING: " + tied.join(", ") + " tied at " + results[1].score +
+    tieWarning = "\n\nWARNING: " + tied.join(", ") + " tied at " + results[cut].score +
       " points for the last winning spot. The tie was broken alphabetically. Review the Borda Results tab.";
   }
 
@@ -387,21 +413,25 @@ function runBordaCount() {
   resultSheet.getRange("A1:C1").setFontWeight("bold");
   resultSheet.getRange(1, 1, outputData.length + 1, 1).setHorizontalAlignment("center");
   resultSheet.getRange(1, 3, outputData.length + 1, 1).setHorizontalAlignment("center");
-  resultSheet.getRange(2, 1, Math.min(2, results.length), 3).setBackground("#d9ead3");
+  resultSheet.getRange(2, 1, numDebates, 3).setBackground("#d9ead3");
 
   resultSheet.getRange("E1").setValue("Winner Summary").setFontWeight("bold");
-  resultSheet.getRange("E2").setValue("Topic A: " + results[0].topic);
-  resultSheet.getRange("E3").setValue("Topic B: " + results[1].topic);
+  if (numDebates === 1) {
+    resultSheet.getRange("E2").setValue("Topic: " + winners[0]);
+    resultSheet.getRange("E3").setValue("(One debate for this class)");
+  } else {
+    resultSheet.getRange("E2").setValue("Topic A: " + winners[0]);
+    resultSheet.getRange("E3").setValue("Topic B: " + winners[1]);
+  }
   resultSheet.getRange("E5").setValue("Ballots counted: " + validVotes);
   if (skippedOld) resultSheet.getRange("E6").setValue("Older ballots ignored: " + skippedOld);
   resultSheet.autoResizeColumns(1, 5);
 
   // If winners changed after a Round 2 form was already made, that form is stale
   var staleNote = "";
-  var oldA = props.getProperty(PROP_TOPIC_A);
-  var oldB = props.getProperty(PROP_TOPIC_B);
-  var winnersChanged = oldA && oldB &&
-      [oldA, oldB].sort().join('|') !== [results[0].topic, results[1].topic].sort().join('|');
+  var oldWinners = savedWinners_();
+  var winnersChanged = oldWinners.length > 0 &&
+      oldWinners.slice().sort().join('|') !== winners.slice().sort().join('|');
   if (winnersChanged && props.getProperty(PROP_ROUND2_FORM)) {
     var staleForm = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
     if (staleForm) staleForm.setAcceptingResponses(false);
@@ -410,8 +440,10 @@ function runBordaCount() {
       "has been closed. Run step 2 again to make a new one.";
   }
 
-  props.setProperty(PROP_TOPIC_A, results[0].topic);
-  props.setProperty(PROP_TOPIC_B, results[1].topic);
+  props.setProperty(PROP_NUM_DEBATES, String(numDebates));
+  props.setProperty(PROP_TOPIC_A, winners[0]);
+  if (numDebates === 2) props.setProperty(PROP_TOPIC_B, winners[1]);
+  else props.deleteProperty(PROP_TOPIC_B);
 
   var tip = cycleStart ? "" :
     "\n\nTip: Next time, choose '0. Start new debate cycle' before sharing the Round 1 form so old ballots are ignored.";
@@ -431,13 +463,13 @@ function createRound2Form() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var ui = SpreadsheetApp.getUi();
   var props = props_();
-  var topicA = props.getProperty(PROP_TOPIC_A);
-  var topicB = props.getProperty(PROP_TOPIC_B);
+  var winners = savedWinners_();
 
-  if (!topicA || !topicB) {
+  if (winners.length === 0) {
     ui.alert("Missing Round 1 winners. Run '1. Run Borda Count' first.");
     return;
   }
+  var single = winners.length === 1;
 
   // Guard against making a second form for the same cycle by accident
   var existing = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
@@ -451,27 +483,34 @@ function createRound2Form() {
   }
 
   var dateLabel = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), "MMM d, yyyy");
-  var form = FormApp.create('Debate Round 2: ' + topicA + ' vs. ' + topicB + ' (' + dateLabel + ')');
+  var form = FormApp.create('Debate Round 2: ' + winners.join(' vs. ') + ' (' + dateLabel + ')');
   form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
   props.setProperty(PROP_ROUND2_FORM, form.getId());
+  props.setProperty(PROP_ROUND2_TOPICS, JSON.stringify(winners));
+  if (single) form.setDescription('Debate topic: ' + winners[0]);
 
   form.addTextItem()
       .setTitle("Student Name")
       .setHelpText("First and last name")
       .setRequired(true);
 
-  var grid = form.addGridItem()
-      .setTitle("Rank the Debate Topics (1 = First Choice, 2 = Second Choice)")
-      .setRows([topicA, topicB])
-      .setColumns(["1", "2"])
-      .setRequired(true);
-  grid.setValidation(FormApp.createGridValidation()
-      .setHelpText("Use each rank only once.")
-      .requireLimitOneResponsePerColumn()
-      .build());
+  // With one debate there's nothing to rank, so the form only asks for a side
+  if (!single) {
+    var grid = form.addGridItem()
+        .setTitle("Rank the Debate Topics (1 = First Choice, 2 = Second Choice)")
+        .setRows(winners)
+        .setColumns(["1", "2"])
+        .setRequired(true);
+    grid.setValidation(FormApp.createGridValidation()
+        .setHelpText("Use each rank only once.")
+        .requireLimitOneResponsePerColumn()
+        .build());
+  }
 
   form.addMultipleChoiceItem()
-      .setTitle("Preferred Debate Side (Applies to whichever topic you are assigned)")
+      .setTitle(single ? "Preferred Debate Side"
+                       : "Preferred Debate Side (Applies to whichever topic you are assigned)")
+      .setHelpText(single ? "Topic: " + winners[0] : "")
       .setChoiceValues(STANCE_CHOICES)
       .setRequired(true);
 
@@ -508,7 +547,13 @@ function matchTeams() {
   var headers = data[0];
   var r2Form = openFormSafe_(formId);
   var topics = r2Form ? gridInfo_(r2Form).rows : [];
-  var topicCols = findTopicCols_(headers, topics);
+  if (topics.length === 0) {
+    // One-debate form: no ranking grid, so use the topic saved when it was made
+    try { topics = JSON.parse(props.getProperty(PROP_ROUND2_TOPICS) || '[]'); } catch (e) { topics = []; }
+    if (topics.length === 0) topics = savedWinners_();
+  }
+  var single = topics.length === 1;
+  var topicCols = single ? [] : findTopicCols_(headers, topics);
   var topicColIdx = topicCols.map(function(t) { return t.index; });
   var nameCol = -1, stanceCol = -1;
 
@@ -522,7 +567,8 @@ function matchTeams() {
     }
   }
 
-  if (nameCol === -1 || stanceCol === -1 || topics.length < 2 || topicCols.length < topics.length) {
+  if (nameCol === -1 || stanceCol === -1 || topics.length === 0 ||
+      (!single && topicCols.length < topics.length)) {
     ui.alert("Could not identify the name, topic ranking, and side columns on the Round 2 responses tab.");
     return;
   }
@@ -667,13 +713,14 @@ function matchTeams() {
   // --- OUTPUT ---
   var rosterSheet = ss.insertSheet("Final Teams (" + stamp_(ss) + ")");
 
-  var report = [
-    ["Match Satisfaction Report", "Count"],
-    ["Topic: 1st Choice", stats.topic1],
-    ["Topic: 2nd Choice", stats.topic2]
-  ];
-  // Only appears if the Round 2 form was hand-edited to have 3+ topics
-  if (stats.topicLower) report.push(["Topic: 3rd Choice or Lower", stats.topicLower]);
+  var report = [["Match Satisfaction Report", "Count"]];
+  if (single) {
+    report.push(["Topic (one debate): " + topics[0], students.length]);
+  } else {
+    report.push(["Topic: 1st Choice", stats.topic1], ["Topic: 2nd Choice", stats.topic2]);
+    // Only appears if the Round 2 form was hand-edited to have 3+ topics
+    if (stats.topicLower) report.push(["Topic: 3rd Choice or Lower", stats.topicLower]);
+  }
   report.push(
     ["Stance: Preferred (Strongly or Normal)", stats.stanceYes],
     ["Stance: Forced to Switch", stats.stanceNo],
@@ -689,7 +736,7 @@ function matchTeams() {
       .setFontWeight("bold").setBackground("#f3f3f3");
 
   var outputData = students.map(function(s) {
-    return [s.assignedTopic, s.assignedStance, s.name, s.topicGranted, s.stanceGranted];
+    return [s.assignedTopic, s.assignedStance, s.name, single ? '—' : s.topicGranted, s.stanceGranted];
   });
   rosterSheet.getRange(headerRow + 1, 1, outputData.length, 5).setValues(outputData);
   rosterSheet.autoResizeColumns(1, 5);
