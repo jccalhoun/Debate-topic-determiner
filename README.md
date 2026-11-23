@@ -22,22 +22,23 @@ You can run every step from any tab. The script finds the right response tabs on
 ## Features
 
 ### Round 1: Borda count consensus voting
-- Tallies ranked-choice ballots from a Google Form multiple-choice grid to find the two topics with the broadest support.
+- Tallies ranked-choice ballots from a Google Form multiple-choice grid to find the topics with the broadest support: the top two, or just the top one for a small class with a single debate.
 - Counts only ballots submitted since the current cycle started, so you can reuse the same form and spreadsheet every time.
 - Ignores columns for topics you've removed or renamed on the form. Google Sheets keeps those old columns, but they no longer count.
-- Breaks ties alphabetically so results are reproducible, and warns you when a tie decides which topic gets the second winning spot.
+- Breaks ties alphabetically so results are reproducible, and warns you when a tie decides which topic gets the last winning spot.
 - Creates a timestamped **Borda Results** audit tab that highlights the winners.
 
 ### Automatic Round 2 form
-- Builds a new Google Form with the two winning topics and links its responses to the same spreadsheet.
+- Builds a new Google Form with the winning topic(s) and links its responses to the same spreadsheet.
+- **Two debates:** students rank all four topic-and-side choices together (e.g., *AI — Pro*, *AI — Con*, *UBI — Pro*, *UBI — Con*). A student who most wants Pro on AI but would rather argue Con on UBI than Con on AI can say exactly that. **One response per column** is turned on automatically, so each rank is used once.
+- **One debate:** students only pick a side, on a 5-point scale: Strongly Prefer Pro, Prefer Pro, No Preference, Prefer Con, Strongly Prefer Con.
 - Saves the Round 2 form in the same Drive folder as your Round 1 form, so each class's forms stay together.
-- Turns on **one response per column** for the topic-ranking grid automatically, so students can't rank both topics "1".
-- Asks for side preference separately, on a 5-point scale: Strongly Prefer Pro, Prefer Pro, No Preference, Prefer Con, Strongly Prefer Con.
 
 ### Round 2: fair team matching
 - Uses a Fisher-Yates shuffle to remove any advantage from submitting early.
 - Calculates exact team sizes. An odd extra student goes to the more popular topic or side.
-- Uses a preference gradient to balance Pro and Con, so students with no preference or a mild one are moved before anyone with a strong preference.
+- **Two debates:** gives everyone their 1st choice while seats last, then 2nd choice, and so on.
+- **One debate:** uses a preference gradient to balance Pro and Con, so students with no preference or a mild one are moved before anyone with a strong preference.
 - If a student submits more than once, only their **latest** submission is used. Names are matched ignoring capitalization and extra spaces.
 - Creates a timestamped **Final Teams** roster with a **Match Satisfaction Report**.
 - Closes the Round 2 form after matching, so late submissions don't arrive once teams are posted.
@@ -78,8 +79,13 @@ Click **Debate Tools → 0. Start new debate cycle** *before* sharing the Round 
 
 Old Borda Results and Final Teams tabs are kept.
 
-### Step 1: Pick the two topics
-Once students have voted, click **1. Run Borda Count (Round 1)**. A new **Borda Results** tab opens with the scores, the winners highlighted, and the number of ballots counted (plus how many older ballots were ignored).
+### Step 1: Pick the topics
+Once students have voted, click **1. Run Borda Count (Round 1)**. The script asks how many debates this class will have:
+
+- **Yes = two debates.** The top two topics win, and Round 2 asks students to rank the four topic-and-side choices.
+- **No = one debate.** For a small class. Only the top topic wins, Round 2 asks only for a side, and Step 3 splits the whole class into Pro and Con on that topic.
+
+A new **Borda Results** tab opens with the scores, the winners highlighted, and the number of ballots counted (plus how many older ballots were ignored).
 
 ### Step 2: Create the Round 2 form
 Click **2. Generate Round 2 Form**. A popup shows the **student link** (to share) and the **edit link**. There are no manual settings to change on this form. It's saved in the same Drive folder as your Round 1 form. (If the script can't access that folder, the form stays in My Drive and still works.)
@@ -90,7 +96,9 @@ To get the links again later, use **❓ What do I do next?**
 
 ### Step 3: Match students into teams
 After everyone submits Round 2, click **3. Match Teams (Round 2)**. A new **Final Teams** tab opens with:
-- A **Match Satisfaction Report**: how many students got their 1st or 2nd topic choice and their preferred side.
+- A **Match Satisfaction Report**.
+  - *Two debates:* how many students got their 1st, 2nd, 3rd, and 4th choice, how many got their 1st-choice topic, and how many got the side they ranked higher on the topic they were given.
+  - *One debate:* how many got their preferred side, were moved to the other side, or had no preference.
 - The full roster, grouped by topic and side, alphabetical within each group.
 
 The Round 2 form closes automatically. If a student still needs to submit, reopen the form (**Responses → Accepting responses**) and run step 3 again. Each run creates a new Final Teams tab, so earlier rosters are kept.
@@ -108,10 +116,21 @@ $$\text{Points} = N - \text{rank} + 1$$
 
 With 10 topics, a 1st-place ranking is worth 10 points, 2nd place 9 points, and 10th place 1 point.
 
-### The 5-point preference gradient (Round 2)
-**Topic assignment:** Students are shuffled randomly (Fisher-Yates) and placed in their first-choice topic until that topic is full. Everyone left over goes to the other topic.
+### Two debates: ranked choices (Round 2)
+Each student ranks four choices: each topic paired with each side. Ranking them together captures preferences that two separate questions can't, such as "Pro on AI first, but Con on UBI before Con on AI."
 
-**Side balancing:** Within each topic, each student's side preference becomes a score:
+**Seats:** Each topic gets half the class, and each side gets half its topic. An odd extra seat goes to the topic, and then the side, that the most students ranked 1st (Pro if tied).
+
+**Assignment:** Students are shuffled randomly (Fisher-Yates) to remove any advantage from submitting early. Then:
+
+1. Everyone gets their 1st choice while seats last.
+2. Students still unplaced get their 2nd choice if it has room.
+3. The same for 3rd and 4th choices.
+
+Every student ranks every choice and there's exactly one seat per student, so everyone is placed by the last pass. With balanced teams, someone usually has to take a low-ranked choice (for example, Con on a topic everyone wants to argue Pro). The shuffle decides who.
+
+### One debate: the 5-point preference gradient (Round 2)
+Everyone debates the same topic. Each student's side preference becomes a score:
 
 | Preference | Score |
 |---|---|
@@ -136,8 +155,11 @@ No Round 2 form exists for this cycle yet (or it was deleted). Run step 2.
 **"Missing Round 1 winners."**
 Run step 1 before step 2.
 
+**Picked the wrong number of debates in Step 1?**
+Run Step 1 again and give the other answer. If you'd already made the Round 2 form, the script closes it and asks you to run Step 2 again.
+
 **Tie warnings**
-If topics tie for the second winning spot, the script picks alphabetically and names every tied topic in the alert. Check the Borda Results tab if you want to choose yourself. A tie for 1st place doesn't produce a warning, because both topics win either way.
+If topics tie for the last winning spot (2nd place with two debates, 1st place with one), the script picks alphabetically and names every tied topic in the alert. Check the Borda Results tab if you want to choose yourself. With two debates, a tie for 1st doesn't produce a warning, because both topics win either way.
 
 **"The winners changed since your Round 2 form was created."**
 You re-ran step 1 after making the Round 2 form, and the result changed. Run step 2 again and stop sharing the old Round 2 link.
@@ -147,6 +169,9 @@ After adding or removing topics, also update the rank columns so they run from 1
 
 **Created a second Round 2 form by mistake?**
 If you answer Yes to "Create a new one and close the old one?", the old form stops accepting responses. Share only the new link.
+
+**"This Round 2 form was made by an older version of Debate Tools."**
+The Round 2 form was created before you updated the script, and it asks the questions in the old format. Run Step 2 again to make a new form and share that link instead.
 
 **Students see "Use each rank only once."**
 That's expected: they tried to give both topics the same rank.

@@ -13,6 +13,9 @@ var PROP_ROUND1_FORM = 'ROUND1_FORM_ID';
 var PROP_ROUND2_FORM = 'ROUND2_FORM_ID';
 var PROP_TOPIC_A = 'DEBATE_TOPIC_A';
 var PROP_TOPIC_B = 'DEBATE_TOPIC_B';
+var PROP_NUM_DEBATES = 'NUM_DEBATES';      // '1' or '2' (missing = 2, for older cycles)
+var PROP_ROUND2_TOPICS = 'ROUND2_TOPICS';  // JSON list of topics on the current Round 2 form
+var PROP_ROUND2_SLOTS = 'ROUND2_SLOTS';    // JSON list of {label, topic, side} choices on a two-debate Round 2 form
 
 var STANCE_CHOICES = [
   "Strongly Prefer Pro",
@@ -144,6 +147,21 @@ function moveNextToRound1_(fileId) {
   }
 }
 
+/** This cycle's Round 1 winners: one topic or two. Empty if step 1 hasn't run. */
+function savedWinners_() {
+  var props = props_();
+  var a = props.getProperty(PROP_TOPIC_A);
+  var b = props.getProperty(PROP_TOPIC_B);
+  if (!a) return [];
+  if (props.getProperty(PROP_NUM_DEBATES) === '1') return [a];
+  return b ? [a, b] : [];
+}
+
+/** The topic/side choices on this cycle's two-debate Round 2 form, or []. */
+function savedSlots_() {
+  try { return JSON.parse(props_().getProperty(PROP_ROUND2_SLOTS) || '[]'); } catch (e) { return []; }
+}
+
 /** Row names and column count of every grid question on a form. */
 function gridInfo_(form) {
   var rows = [], columns = 0;
@@ -188,8 +206,7 @@ function showStatus(headline) {
   var props = props_();
   var tz = ss.getSpreadsheetTimeZone();
   var start = Number(props.getProperty(PROP_CYCLE_START) || 0);
-  var topicA = props.getProperty(PROP_TOPIC_A);
-  var topicB = props.getProperty(PROP_TOPIC_B);
+  var winners = savedWinners_();
   var r1 = openFormSafe_(props.getProperty(PROP_ROUND1_FORM));
   var r2 = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
 
@@ -211,8 +228,10 @@ function showStatus(headline) {
     html += '<b>Round 1 tab:</b> not set yet (remembered the first time you run step 1)<br>';
   }
 
-  if (topicA && topicB) {
-    html += '<b>Winning topics:</b> ' + escapeHtml_(topicA) + ' / ' + escapeHtml_(topicB) + '<br>';
+  if (winners.length === 1) {
+    html += '<b>Winning topic (one debate):</b> ' + escapeHtml_(winners[0]) + '<br>';
+  } else if (winners.length === 2) {
+    html += '<b>Winning topics:</b> ' + escapeHtml_(winners[0]) + ' / ' + escapeHtml_(winners[1]) + '<br>';
   }
 
   if (r2) {
@@ -225,7 +244,7 @@ function showStatus(headline) {
   var next;
   if (!start) {
     next = 'Choose <b>0. Start new debate cycle</b>, then share your Round 1 form with students.';
-  } else if (!topicA || !topicB) {
+  } else if (winners.length === 0) {
     next = 'When Round 1 votes are in, choose <b>1. Run Borda Count</b>.';
   } else if (!r2) {
     next = 'Choose <b>2. Generate Round 2 Form</b>.';
@@ -259,6 +278,9 @@ function startNewCycle() {
   var oldR2 = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
   if (oldR2 && oldR2.isAcceptingResponses()) oldR2.setAcceptingResponses(false);
 
+  props.deleteProperty(PROP_NUM_DEBATES);
+  props.deleteProperty(PROP_ROUND2_TOPICS);
+  props.deleteProperty(PROP_ROUND2_SLOTS);
   props.deleteProperty(PROP_TOPIC_A);
   props.deleteProperty(PROP_TOPIC_B);
   props.deleteProperty(PROP_ROUND2_FORM);
@@ -368,12 +390,23 @@ function runBordaCount() {
     return a.topic.localeCompare(b.topic);
   });
 
-  // Only a tie at the 2nd/3rd boundary changes which topics win
+  // One debate (small class) or two?
+  var howMany = ui.alert(
+    'How many debates will this class have?',
+    'YES = two debates (the top 2 topics).\nNO = one debate (only the top topic), for a small class.',
+    ui.ButtonSet.YES_NO);
+  if (howMany !== ui.Button.YES && howMany !== ui.Button.NO) return;  // closed the dialog
+  var numDebates = (howMany === ui.Button.NO) ? 1 : 2;
+  var winners = results.slice(0, numDebates).map(function(x) { return x.topic; });
+
+  // Only a tie at the last winning spot changes which topics win
+  // (2nd vs 3rd for two debates, 1st vs 2nd for one)
   var tieWarning = "";
-  if (results.length > 2 && results[1].score === results[2].score) {
-    var tied = results.filter(function(x) { return x.score === results[1].score; })
+  var cut = numDebates - 1;
+  if (results.length > numDebates && results[cut].score === results[numDebates].score) {
+    var tied = results.filter(function(x) { return x.score === results[cut].score; })
                       .map(function(x) { return "'" + x.topic + "'"; });
-    tieWarning = "\n\nWARNING: " + tied.join(", ") + " tied at " + results[1].score +
+    tieWarning = "\n\nWARNING: " + tied.join(", ") + " tied at " + results[cut].score +
       " points for the last winning spot. The tie was broken alphabetically. Review the Borda Results tab.";
   }
 
@@ -387,21 +420,25 @@ function runBordaCount() {
   resultSheet.getRange("A1:C1").setFontWeight("bold");
   resultSheet.getRange(1, 1, outputData.length + 1, 1).setHorizontalAlignment("center");
   resultSheet.getRange(1, 3, outputData.length + 1, 1).setHorizontalAlignment("center");
-  resultSheet.getRange(2, 1, Math.min(2, results.length), 3).setBackground("#d9ead3");
+  resultSheet.getRange(2, 1, numDebates, 3).setBackground("#d9ead3");
 
   resultSheet.getRange("E1").setValue("Winner Summary").setFontWeight("bold");
-  resultSheet.getRange("E2").setValue("Topic A: " + results[0].topic);
-  resultSheet.getRange("E3").setValue("Topic B: " + results[1].topic);
+  if (numDebates === 1) {
+    resultSheet.getRange("E2").setValue("Topic: " + winners[0]);
+    resultSheet.getRange("E3").setValue("(One debate for this class)");
+  } else {
+    resultSheet.getRange("E2").setValue("Topic A: " + winners[0]);
+    resultSheet.getRange("E3").setValue("Topic B: " + winners[1]);
+  }
   resultSheet.getRange("E5").setValue("Ballots counted: " + validVotes);
   if (skippedOld) resultSheet.getRange("E6").setValue("Older ballots ignored: " + skippedOld);
   resultSheet.autoResizeColumns(1, 5);
 
   // If winners changed after a Round 2 form was already made, that form is stale
   var staleNote = "";
-  var oldA = props.getProperty(PROP_TOPIC_A);
-  var oldB = props.getProperty(PROP_TOPIC_B);
-  var winnersChanged = oldA && oldB &&
-      [oldA, oldB].sort().join('|') !== [results[0].topic, results[1].topic].sort().join('|');
+  var oldWinners = savedWinners_();
+  var winnersChanged = oldWinners.length > 0 &&
+      oldWinners.slice().sort().join('|') !== winners.slice().sort().join('|');
   if (winnersChanged && props.getProperty(PROP_ROUND2_FORM)) {
     var staleForm = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
     if (staleForm) staleForm.setAcceptingResponses(false);
@@ -410,8 +447,10 @@ function runBordaCount() {
       "has been closed. Run step 2 again to make a new one.";
   }
 
-  props.setProperty(PROP_TOPIC_A, results[0].topic);
-  props.setProperty(PROP_TOPIC_B, results[1].topic);
+  props.setProperty(PROP_NUM_DEBATES, String(numDebates));
+  props.setProperty(PROP_TOPIC_A, winners[0]);
+  if (numDebates === 2) props.setProperty(PROP_TOPIC_B, winners[1]);
+  else props.deleteProperty(PROP_TOPIC_B);
 
   var tip = cycleStart ? "" :
     "\n\nTip: Next time, choose '0. Start new debate cycle' before sharing the Round 1 form so old ballots are ignored.";
@@ -431,13 +470,13 @@ function createRound2Form() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var ui = SpreadsheetApp.getUi();
   var props = props_();
-  var topicA = props.getProperty(PROP_TOPIC_A);
-  var topicB = props.getProperty(PROP_TOPIC_B);
+  var winners = savedWinners_();
 
-  if (!topicA || !topicB) {
+  if (winners.length === 0) {
     ui.alert("Missing Round 1 winners. Run '1. Run Borda Count' first.");
     return;
   }
+  var single = winners.length === 1;
 
   // Guard against making a second form for the same cycle by accident
   var existing = openFormSafe_(props.getProperty(PROP_ROUND2_FORM));
@@ -451,29 +490,46 @@ function createRound2Form() {
   }
 
   var dateLabel = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), "MMM d, yyyy");
-  var form = FormApp.create('Debate Round 2: ' + topicA + ' vs. ' + topicB + ' (' + dateLabel + ')');
+  var form = FormApp.create('Debate Round 2: ' + winners.join(' vs. ') + ' (' + dateLabel + ')');
   form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
   props.setProperty(PROP_ROUND2_FORM, form.getId());
+  props.setProperty(PROP_ROUND2_TOPICS, JSON.stringify(winners));
+  if (single) form.setDescription('Debate topic: ' + winners[0]);
 
   form.addTextItem()
       .setTitle("Student Name")
       .setHelpText("First and last name")
       .setRequired(true);
 
-  var grid = form.addGridItem()
-      .setTitle("Rank the Debate Topics (1 = First Choice, 2 = Second Choice)")
-      .setRows([topicA, topicB])
-      .setColumns(["1", "2"])
-      .setRequired(true);
-  grid.setValidation(FormApp.createGridValidation()
-      .setHelpText("Use each rank only once.")
-      .requireLimitOneResponsePerColumn()
-      .build());
+  if (single) {
+    // One debate: nothing to rank, just which side they'd rather argue
+    props.deleteProperty(PROP_ROUND2_SLOTS);
+    form.addMultipleChoiceItem()
+        .setTitle("Preferred Debate Side")
+        .setHelpText("Topic: " + winners[0])
+        .setChoiceValues(STANCE_CHOICES)
+        .setRequired(true);
+  } else {
+    // Two debates: rank every topic + side combination together
+    var slots = [];
+    winners.forEach(function(t) {
+      slots.push({ label: t + ' — Pro (for)', topic: t, side: 'Pro' });
+      slots.push({ label: t + ' — Con (against)', topic: t, side: 'Con' });
+    });
+    props.setProperty(PROP_ROUND2_SLOTS, JSON.stringify(slots));
 
-  form.addMultipleChoiceItem()
-      .setTitle("Preferred Debate Side (Applies to whichever topic you are assigned)")
-      .setChoiceValues(STANCE_CHOICES)
-      .setRequired(true);
+    var columns = slots.map(function(s, k) { return String(k + 1); });
+    var grid = form.addGridItem()
+        .setTitle("Rank your choices (1 = most wanted, " + slots.length + " = least wanted)")
+        .setHelpText("Each choice is a topic plus the side you would argue. Use each rank once.")
+        .setRows(slots.map(function(s) { return s.label; }))
+        .setColumns(columns)
+        .setRequired(true);
+    grid.setValidation(FormApp.createGridValidation()
+        .setHelpText("Use each rank only once.")
+        .requireLimitOneResponsePerColumn()
+        .build());
+  }
 
   // Keep each class's forms together: put Round 2 next to the Round 1 form
   var folderName = moveNextToRound1_(form.getId());
@@ -503,17 +559,35 @@ function matchTeams() {
     return;
   }
 
-  // --- FIND COLUMNS ---
-  // Topics come from the Round 2 form itself, matched by exact "[Topic]" suffix
-  var headers = data[0];
+  // --- WHICH KIND OF ROUND 2 FORM? ---
+  // Two debates: one grid ranking the topic/side choices ("slots").
+  // One debate: no grid, just the 5-point side question.
   var r2Form = openFormSafe_(formId);
-  var topics = r2Form ? gridInfo_(r2Form).rows : [];
-  var topicCols = findTopicCols_(headers, topics);
-  var topicColIdx = topicCols.map(function(t) { return t.index; });
+  var gridRows = r2Form ? gridInfo_(r2Form).rows : [];
+  var slots = savedSlots_();
+  var single = gridRows.length === 0;
+
+  if (!single && !(slots.length && slots.every(function(s) { return gridRows.indexOf(s.label) !== -1; }))) {
+    ui.alert("This Round 2 form was made by an older version of Debate Tools. " +
+      "Run '2. Generate Round 2 Form' again to make a new one.");
+    return;
+  }
+
+  var topic = null;
+  if (single) {
+    var saved = [];
+    try { saved = JSON.parse(props.getProperty(PROP_ROUND2_TOPICS) || '[]'); } catch (e) {}
+    topic = saved[0] || savedWinners_()[0];
+  }
+
+  // --- FIND COLUMNS ---
+  var headers = data[0];
+  var slotCols = single ? [] : findTopicCols_(headers, slots.map(function(s) { return s.label; }));
+  var slotColIdx = slotCols.map(function(c) { return c.index; });
   var nameCol = -1, stanceCol = -1;
 
   for (var i = 0; i < headers.length; i++) {
-    if (topicColIdx.indexOf(i) !== -1) continue;
+    if (slotColIdx.indexOf(i) !== -1) continue;
     var header = String(headers[i]).toLowerCase();
     if (nameCol === -1 && header.indexOf('name') !== -1) {
       nameCol = i;
@@ -522,8 +596,11 @@ function matchTeams() {
     }
   }
 
-  if (nameCol === -1 || stanceCol === -1 || topics.length < 2 || topicCols.length < topics.length) {
-    ui.alert("Could not identify the name, topic ranking, and side columns on the Round 2 responses tab.");
+  var missingSlotCol = !single && slots.some(function(s) {
+    return !slotCols.some(function(c) { return c.topic === s.label; });
+  });
+  if (nameCol === -1 || (single && (stanceCol === -1 || !topic)) || missingSlotCol) {
+    ui.alert("Could not identify the name and preference columns on the Round 2 responses tab.");
     return;
   }
 
@@ -536,28 +613,27 @@ function matchTeams() {
     var name = String(row[nameCol] || '').trim().replace(/\s+/g, ' ');
     if (!name) continue;
 
-    var prefs = [];
-    for (var c = 0; c < topicCols.length; c++) {
-      var rank = parseInt(row[topicCols[c].index], 10);
-      if (!isNaN(rank)) prefs.push({ topic: topicCols[c].topic, rank: rank });
+    var student = { name: name, assignedTopic: null, assignedStance: null };
+
+    if (single) {
+      student.stancePref = String(row[stanceCol] || '').trim();
+    } else {
+      var ranked = [];
+      slotCols.forEach(function(c) {
+        var rank = parseInt(row[c.index], 10);
+        if (!isNaN(rank)) ranked.push({ label: c.topic, rank: rank });
+      });
+      ranked.sort(function(a, b) { return a.rank - b.rank; });
+      var slotPrefs = [];
+      ranked.forEach(function(p) { if (slotPrefs.indexOf(p.label) === -1) slotPrefs.push(p.label); });
+      // Anything left unranked goes at the end so every student has a complete list
+      slots.forEach(function(s) { if (slotPrefs.indexOf(s.label) === -1) slotPrefs.push(s.label); });
+      student.slotPrefs = slotPrefs;
     }
-    prefs.sort(function(a, b) { return a.rank - b.rank; });
-    var topicPrefs = [];
-    prefs.forEach(function(p) { if (topicPrefs.indexOf(p.topic) === -1) topicPrefs.push(p.topic); });
-    // Fill in any unranked topics so every student has a complete list
-    topics.forEach(function(t) { if (topicPrefs.indexOf(t) === -1) topicPrefs.push(t); });
 
     var key = name.toLowerCase();
     if (byName[key]) dupes++;
-    byName[key] = {
-      name: name,
-      topicPrefs: topicPrefs,
-      stancePref: String(row[stanceCol] || '').trim(),
-      assignedTopic: null,
-      assignedStance: null,
-      topicGranted: null,
-      stanceGranted: null
-    };
+    byName[key] = student;
   }
 
   var students = Object.keys(byName).map(function(k) { return byName[k]; });
@@ -566,79 +642,14 @@ function matchTeams() {
     return;
   }
 
-  function shuffleArray(array) {
-    for (var i = array.length - 1; i > 0; i--) {
-      var j = Math.floor(Math.random() * (i + 1));
-      var temp = array[i]; array[i] = array[j]; array[j] = temp;
-    }
+  // --- ASSIGN ---
+  shuffle_(students);  // removes any advantage from submitting early
+  if (single) {
+    students.forEach(function(s) { s.assignedTopic = topic; });
+    splitBySideGradient_(students);
+  } else {
+    assignSlots_(students, slots);
   }
-
-  function getStanceScore(pref) {
-    if (pref === "Strongly Prefer Pro") return 2;
-    if (pref === "Prefer Pro") return 1;
-    if (pref === "Strongly Prefer Con") return -2;
-    if (pref === "Prefer Con") return -1;
-    return 0;
-  }
-
-  // --- PHASE 1: TOPIC ASSIGNMENT ---
-  shuffleArray(students);
-  var topicCapacities = {};
-  var baseCap = Math.floor(students.length / topics.length);
-  topics.forEach(function(t) { topicCapacities[t] = baseCap; });
-
-  var remainder = students.length % topics.length;
-  if (remainder > 0) {
-    var firstChoiceCounts = {};
-    topics.forEach(function(t) { firstChoiceCounts[t] = 0; });
-    students.forEach(function(s) { firstChoiceCounts[s.topicPrefs[0]]++; });
-    var popSorted = topics.slice().sort(function(a, b) { return firstChoiceCounts[b] - firstChoiceCounts[a]; });
-    for (var p = 0; p < remainder; p++) topicCapacities[popSorted[p]]++;
-  }
-
-  var topicTeams = {};
-  topics.forEach(function(t) { topicTeams[t] = []; });
-
-  // Pass 1 gives everyone their 1st choice while seats last; pass 2 places the
-  // rest in their 2nd choice. (Further passes only matter if the Round 2 form
-  // was hand-edited to have more than two topics.)
-  for (var pass = 0; pass < topics.length; pass++) {
-    students.filter(function(s) { return !s.assignedTopic; }).forEach(function(s) {
-      var choice = s.topicPrefs[pass];
-      if (topicTeams[choice].length < topicCapacities[choice]) {
-        s.assignedTopic = choice; s.topicGranted = pass + 1; topicTeams[choice].push(s);
-      }
-    });
-  }
-
-  // --- PHASE 2: PRO/CON BALANCING ---
-  topics.forEach(function(t) {
-    var team = topicTeams[t];
-    shuffleArray(team);  // randomizes order within each score tier
-
-    team.sort(function(a, b) {
-      return getStanceScore(b.stancePref) - getStanceScore(a.stancePref);
-    });
-
-    var capPro = Math.floor(team.length / 2);
-    if (team.length % 2 !== 0) {
-      var proDemand = team.filter(function(s) { return getStanceScore(s.stancePref) > 0; }).length;
-      var conDemand = team.filter(function(s) { return getStanceScore(s.stancePref) < 0; }).length;
-      if (conDemand <= proDemand) capPro++;
-    }
-
-    for (var i = 0; i < team.length; i++) {
-      var s = team[i];
-      var score = getStanceScore(s.stancePref);
-      if (i < capPro) {
-        s.assignedStance = 'Pro';
-        s.stanceGranted = score > 0 ? 'Yes' : (score === 0 ? 'N/A' : 'No');
-      } else {
-        s.assignedStance = 'Con';
-        s.stanceGranted = score < 0 ? 'Yes' : (score === 0 ? 'N/A' : 'No');
-      }
-    }
-  });
 
   // Safety check for unassigned students
   var failed = students.filter(function(s) { return !s.assignedTopic || !s.assignedStance; });
@@ -647,15 +658,43 @@ function matchTeams() {
     return;
   }
 
-  var stats = { topic1: 0, topic2: 0, topicLower: 0, stanceYes: 0, stanceNo: 0, stanceNA: 0 };
-  students.forEach(function(s) {
-    if (s.topicGranted === 1) stats.topic1++;
-    else if (s.topicGranted === 2) stats.topic2++;
-    else stats.topicLower++;
-    if (s.stanceGranted === 'Yes') stats.stanceYes++;
-    if (s.stanceGranted === 'No') stats.stanceNo++;
-    if (s.stanceGranted === 'N/A') stats.stanceNA++;
-  });
+  // --- REPORT + ROSTER ---
+  var report = [["Match Satisfaction Report", "Count"]];
+  var rosterHeader, outputData;
+
+  if (single) {
+    var yes = 0, no = 0, na = 0;
+    students.forEach(function(s) {
+      if (s.stanceGranted === 'Yes') yes++;
+      else if (s.stanceGranted === 'No') no++;
+      else na++;
+    });
+    report.push(
+      ["Topic (one debate): " + topic, students.length],
+      ["Stance: Preferred (Strongly or Normal)", yes],
+      ["Stance: Forced to Switch", no],
+      ["Stance: Had No Preference", na]);
+    rosterHeader = ["Debate Topic", "Side", "Student Name", "Side Preference", "Stance Granted"];
+    outputData = function(s) { return [s.assignedTopic, s.assignedStance, s.name, s.stancePref, s.stanceGranted]; };
+  } else {
+    var bySlot = {};
+    slots.forEach(function(s) { bySlot[s.label] = s; });
+    var choiceCounts = slots.map(function() { return 0; });
+    var gotTopic = 0, gotSide = 0;
+    students.forEach(function(s) {
+      choiceCounts[s.choiceGranted - 1]++;
+      if (bySlot[s.slotPrefs[0]].topic === s.assignedTopic) gotTopic++;
+      // On their assigned topic, did they get the side they ranked higher?
+      var onTopic = s.slotPrefs.filter(function(l) { return bySlot[l].topic === s.assignedTopic; });
+      if (bySlot[onTopic[0]].side === s.assignedStance) gotSide++;
+    });
+    choiceCounts.forEach(function(n, k) { report.push(["Got their " + ordinal_(k + 1) + " choice", n]); });
+    report.push(
+      ["Got their 1st-choice topic", gotTopic],
+      ["Got the side they ranked higher on their topic", gotSide]);
+    rosterHeader = ["Debate Topic", "Side", "Student Name", "Choice Received", "Their 1st Choice"];
+    outputData = function(s) { return [s.assignedTopic, s.assignedStance, s.name, s.choiceGranted, s.slotPrefs[0]]; };
+  }
 
   // Roster order: topic, then Pro before Con, then name
   students.sort(function(a, b) {
@@ -664,43 +703,130 @@ function matchTeams() {
     return a.name.localeCompare(b.name);
   });
 
-  // --- OUTPUT ---
   var rosterSheet = ss.insertSheet("Final Teams (" + stamp_(ss) + ")");
-
-  var report = [
-    ["Match Satisfaction Report", "Count"],
-    ["Topic: 1st Choice", stats.topic1],
-    ["Topic: 2nd Choice", stats.topic2]
-  ];
-  // Only appears if the Round 2 form was hand-edited to have 3+ topics
-  if (stats.topicLower) report.push(["Topic: 3rd Choice or Lower", stats.topicLower]);
-  report.push(
-    ["Stance: Preferred (Strongly or Normal)", stats.stanceYes],
-    ["Stance: Forced to Switch", stats.stanceNo],
-    ["Stance: Had No Preference", stats.stanceNA]
-  );
   rosterSheet.getRange(1, 1, report.length, 2).setValues(report);
   rosterSheet.getRange("A1:B1").setFontWeight("bold").setBackground("#cfe2f3");
 
   // Roster starts one blank row below the report
   var headerRow = report.length + 2;
-  rosterSheet.getRange(headerRow, 1, 1, 5)
-      .setValues([["Debate Topic", "Side", "Student Name", "Topic Choice", "Stance Granted"]])
+  rosterSheet.getRange(headerRow, 1, 1, 5).setValues([rosterHeader])
       .setFontWeight("bold").setBackground("#f3f3f3");
-
-  var outputData = students.map(function(s) {
-    return [s.assignedTopic, s.assignedStance, s.name, s.topicGranted, s.stanceGranted];
-  });
-  rosterSheet.getRange(headerRow + 1, 1, outputData.length, 5).setValues(outputData);
+  var rows = students.map(outputData);
+  rosterSheet.getRange(headerRow + 1, 1, rows.length, 5).setValues(rows);
   rosterSheet.autoResizeColumns(1, 5);
-  rosterSheet.getRange(headerRow + 1, 4, outputData.length, 2).setHorizontalAlignment("center");
+  rosterSheet.getRange(headerRow + 1, 4, rows.length, 2).setHorizontalAlignment("center");
 
   // Close Round 2 so late submissions don't arrive after teams are posted
-  var r2 = openFormSafe_(formId);
-  if (r2) r2.setAcceptingResponses(false);
+  if (r2Form) r2Form.setAcceptingResponses(false);
 
   rosterSheet.activate();
   ui.alert("Assignments complete! " + students.length + " students placed." +
     (dupes ? "\n\n" + dupes + " duplicate submission(s) found; each student's latest one was used." : "") +
     "\n\nThe Round 2 form is now closed. To accept late responses, reopen it from the form's Responses tab and run step 3 again.");
+}
+
+/* ------------------------------------------------------------------ */
+/* Matching helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+function shuffle_(array) {
+  for (var i = array.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var temp = array[i]; array[i] = array[j]; array[j] = temp;
+  }
+}
+
+function ordinal_(n) {
+  return n + (n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th');
+}
+
+function stanceScore_(pref) {
+  if (pref === "Strongly Prefer Pro") return 2;
+  if (pref === "Prefer Pro") return 1;
+  if (pref === "Strongly Prefer Con") return -2;
+  if (pref === "Prefer Con") return -1;
+  return 0;
+}
+
+/**
+ * ONE DEBATE: split a (shuffled) team into Pro/Con with the 5-point gradient.
+ * Sort from +2 to -2 and cut in the middle, so No Preference and mild
+ * preferences fill out team sizes before any Strongly Prefer student moves.
+ */
+function splitBySideGradient_(team) {
+  team.sort(function(a, b) { return stanceScore_(b.stancePref) - stanceScore_(a.stancePref); });
+
+  var capPro = Math.floor(team.length / 2);
+  if (team.length % 2 !== 0) {
+    var proDemand = team.filter(function(s) { return stanceScore_(s.stancePref) > 0; }).length;
+    var conDemand = team.filter(function(s) { return stanceScore_(s.stancePref) < 0; }).length;
+    if (conDemand <= proDemand) capPro++;
+  }
+
+  team.forEach(function(s, i) {
+    var score = stanceScore_(s.stancePref);
+    if (i < capPro) {
+      s.assignedStance = 'Pro';
+      s.stanceGranted = score > 0 ? 'Yes' : (score === 0 ? 'N/A' : 'No');
+    } else {
+      s.assignedStance = 'Con';
+      s.stanceGranted = score < 0 ? 'Yes' : (score === 0 ? 'N/A' : 'No');
+    }
+  });
+}
+
+/**
+ * TWO DEBATES: assign (shuffled) students to topic/side slots from their rankings.
+ * Each topic gets half the class and each side half its topic; odd extra seats
+ * go to whichever topic or side the most students ranked 1st. Then pass 1 gives
+ * everyone their 1st choice while seats last, pass 2 places the rest in their
+ * 2nd choice, and so on. Every student ranks every slot and seats = students,
+ * so everyone is placed by the last pass.
+ */
+function assignSlots_(students, slots) {
+  var topics = [];
+  slots.forEach(function(s) { if (topics.indexOf(s.topic) === -1) topics.push(s.topic); });
+
+  var firstChoice = {};
+  slots.forEach(function(s) { firstChoice[s.label] = 0; });
+  students.forEach(function(st) { firstChoice[st.slotPrefs[0]]++; });
+
+  var topicDemand = {};
+  topics.forEach(function(t) { topicDemand[t] = 0; });
+  slots.forEach(function(s) { topicDemand[s.topic] += firstChoice[s.label]; });
+
+  // Topic sizes
+  var topicCap = {};
+  var base = Math.floor(students.length / topics.length);
+  topics.forEach(function(t) { topicCap[t] = base; });
+  topics.slice().sort(function(a, b) { return topicDemand[b] - topicDemand[a]; })
+      .slice(0, students.length % topics.length)
+      .forEach(function(t) { topicCap[t]++; });
+
+  // Side sizes within each topic (ties go to Pro, which is listed first)
+  var cap = {};
+  topics.forEach(function(t) {
+    var sides = slots.filter(function(s) { return s.topic === t; });
+    var per = Math.floor(topicCap[t] / sides.length);
+    sides.forEach(function(s) { cap[s.label] = per; });
+    sides.slice().sort(function(a, b) { return firstChoice[b.label] - firstChoice[a.label]; })
+        .slice(0, topicCap[t] % sides.length)
+        .forEach(function(s) { cap[s.label]++; });
+  });
+
+  var bySlot = {}, filled = {};
+  slots.forEach(function(s) { bySlot[s.label] = s; filled[s.label] = 0; });
+
+  for (var pass = 0; pass < slots.length; pass++) {
+    students.forEach(function(st) {
+      if (st.assignedTopic) return;
+      var label = st.slotPrefs[pass];
+      if (filled[label] < cap[label]) {
+        filled[label]++;
+        st.assignedTopic = bySlot[label].topic;
+        st.assignedStance = bySlot[label].side;
+        st.choiceGranted = pass + 1;
+      }
+    });
+  }
 }
